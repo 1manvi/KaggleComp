@@ -4,6 +4,7 @@ import pandas as pd
 import torch
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, Dataset
+from torchvision import transforms
 
 
 class DigitDataset(Dataset):
@@ -28,11 +29,17 @@ class DigitDataset(Dataset):
         return img, self.labels[idx]
 
 
-def make_loaders(train_csv, val_size=0.1, batch_size=128, seed=42, train_transform=None):
+def make_test_loader(test_csv, mean, std, batch_size=256):
+    """Loader for Kaggle's test.csv (no labels), in original row order."""
+    X_test = pd.read_csv(test_csv).values
+    test_ds = DigitDataset(X_test, labels=None, mean=mean, std=std)
+    return DataLoader(test_ds, batch_size=batch_size, shuffle=False)
+
+def make_loaders(train_csv, val_size=0.1, batch_size=128, seed=42, augment=False):
     """Return (train_loader, val_loader, (mean, std)).
 
-    If val_size == 0, uses all data for training and val_loader is None
-    (for the final retrain before submitting).
+    augment=True applies small random rotations/shifts/zooms to TRAINING images only.
+    If val_size == 0, uses all data for training and val_loader is None.
     """
     df = pd.read_csv(train_csv)
     y = df["label"].values
@@ -45,9 +52,15 @@ def make_loaders(train_csv, val_size=0.1, batch_size=128, seed=42, train_transfo
     else:
         X_tr, y_tr, X_val, y_val = X, y, None, None
 
-    # Normalisation stats from the TRAINING split only
     mean = float(X_tr.mean() / 255.0)
     std = float(X_tr.std() / 255.0)
+
+    train_transform = None
+    if augment:
+        background = (0.0 - mean) / std   # value of a black pixel after normalisation (~ -0.42)
+        train_transform = transforms.RandomAffine(
+            degrees=10, translate=(0.1, 0.1), scale=(0.9, 1.1), fill=background
+        )
 
     train_ds = DigitDataset(X_tr, y_tr, mean, std, transform=train_transform)
     g = torch.Generator().manual_seed(seed)
@@ -59,10 +72,3 @@ def make_loaders(train_csv, val_size=0.1, batch_size=128, seed=42, train_transfo
         val_loader = DataLoader(val_ds, batch_size=batch_size * 2, shuffle=False)
 
     return train_loader, val_loader, (mean, std)
-
-
-def make_test_loader(test_csv, mean, std, batch_size=256):
-    """Loader for Kaggle's test.csv (no labels), in original row order."""
-    X_test = pd.read_csv(test_csv).values
-    test_ds = DigitDataset(X_test, labels=None, mean=mean, std=std)
-    return DataLoader(test_ds, batch_size=batch_size, shuffle=False)
